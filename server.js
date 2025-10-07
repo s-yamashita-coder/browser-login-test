@@ -15,16 +15,13 @@ app.use(session({
 }));
 
 // --- ダミーのユーザーデータ ---
-// 本来はデータベースから取得します
 const users = [
   { id: 1, username: 'user1', password: 'password1' },
   { id: 2, username: 'admin', password: 'admin_pass' }
 ];
 
 // --- 認証チェック用のミドルウェア ---
-// この関数をログインが必要なページの前に挟むことで、
-// ログインしていないユーザーをログインページにリダイレクトします。
-const requireAuth = (req, res, next) => {
+const requireAuth = function(req, res, next) {
   if (req.session.user) {
     // セッションにユーザー情報があれば、次の処理へ進む
     next();
@@ -38,7 +35,7 @@ const requireAuth = (req, res, next) => {
 // --- ルーティング（各URLに対する処理） ---
 
 // 1. ルート: ログインしていればホームへ、していなければログインページへ
-app.get('/', (req, res) => {
+app.get('/', function(req, res) {
   if (req.session.user) {
     res.redirect('/home');
   } else {
@@ -47,7 +44,7 @@ app.get('/', (req, res) => {
 });
 
 // 2. ログイン画面を表示 (GET /login)
-app.get('/login', (req, res) => {
+app.get('/login', function(req, res) {
   const errorMessage = req.query.error ? '<p style="color: red;">ログインが必要です。</p>' : '';
   const loginFailedMessage = req.query.failed ? '<p style="color: red;">ユーザー名またはパスワードが違います。</p>' : '';
 
@@ -78,64 +75,12 @@ app.get('/login', (req, res) => {
 });
 
 // 3. ログイン処理 (POST /login)
-app.post('/login', (req, res) => {
+app.post('/login', function(req, res) {
   const { username, password } = req.body;
 
-  // 入力されたユーザー名とパスワードでユーザーを探す
-  const user = users.find(u => u.username === username && u.password === password);
+  const user = users.find(function(u) {
+    return u.username === username && u.password === password;
+  });
 
   if (user) {
-    // ユーザーが見つかったら、セッションにユーザー情報を保存
-    // (セキュリティのためパスワードは保存しない)
-    req.session.user = {
-      id: user.id,
-      username: user.username
-    };
-    // ホーム画面へリダイレクト
-    res.redirect('/home');
-  } else {
-    // 見つからなければ、エラーメッセージ付きでログイン画面へリダイレクト
-    res.redirect('/login?failed=1');
-  }
-});
-
-// 4. ホーム画面 (GET /home)
-// `requireAuth` ミドルウェアを適用して、ログイン必須にする
-app.get('/home', requireAuth, (req, res) => {
-  // セッションからユーザー名を取り出す
-  const username = req.session.user.username;
-
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="ja">
-    <head>
-      <title>ホーム</title>
-    </head>
-    <body>
-      <h1>ようこそ、${username} さん！</h1>
-      <p>ここはログインした人だけが見れるページです。</p>
-      <form action="/logout" method="post">
-        <button type="submit">ログアウト</button>
-      </form>
-    </body>
-    </html>
-  `);
-});
-
-// 5. ログアウト処理 (POST /logout)
-app.post('/logout', (req, res) => {
-  // セッションを破棄する
-  req.session.destroy(err => {
-    if (err) {
-      return res.redirect('/home');
-    }
-    // ログインページへリダイレクト
-    res.redirect('/login');
-  });
-});
-
-
-// --- サーバーの起動 ---
-app.listen(PORT, () => {
-  console.log(`サーバーが http://localhost:${PORT} で起動しました`);
-});
+    req
