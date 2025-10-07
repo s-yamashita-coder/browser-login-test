@@ -16,8 +16,8 @@ app.use(session({
 
 // --- ダミーのユーザーデータ ---
 const users = [
-  { id: 1, username: 'user1', password: 'password1' },
-  { id: 2, username: 'admin', password: 'admin_pass' }
+  { id: 1, username: 'user1', password: 'password1',role: 'user' },
+  { id: 2, username: 'admin', password: 'admin_pass',role: 'admin' }
 ];
 
 // --- 認証チェック用のミドルウェア ---
@@ -28,6 +28,17 @@ const requireAuth = function(req, res, next) {
   } else {
     // なければログインページへリダイレクト
     res.redirect('/login?error=1');
+  }
+};
+
+// ★★★ ここに新しい門番を追加 ★★★
+const requireAdmin = function(req, res, next) {
+  // セッションにユーザー情報があり、かつ、その役割が 'admin' かどうかをチェック
+  if (req.session.user && req.session.user.role === 'admin') {
+    next(); // 管理者なら、次の処理へ進む
+  } else {
+    // 管理者でなければ、エラーメッセージを表示
+    res.status(403).send('<h1>403 Forbidden</h1><p>このページへのアクセス権がありません。</p>');
   }
 };
 
@@ -44,7 +55,11 @@ app.post('/login', function(req, res) {
   // ユーザーが見つかり、かつパスワードがハッシュと一致するかチェック
   if (user && bcrypt.compareSync(password, user.passwordHash)) {
     // 成功！
-    req.session.user = { id: user.id, username: user.username };
+    req.session.user = { 
+      id: user.id,
+      username: user.username,
+      role: user.role // ★役割もセッションに保存
+    };
     res.redirect('/home');
   } else {
     // 失敗...
@@ -92,4 +107,59 @@ app.post('/login', function(req, res) {
   });
 
   if (user) {
-    req
+    req.session.user = {
+      id: user.id,
+      username: user.username
+    };
+    res.redirect('/home');
+  } else {
+    res.redirect('/login?failed=1');
+  }
+});
+
+// 4. ホーム画面 (GET /home)
+app.get('/home', requireAuth, function(req, res) {
+  const username = req.session.user.username;
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+      <title>ホーム</title>
+    </head>
+    <body>
+      <h1>ようこそ、${username} さん！</h1>
+      <p>ここはログインした人だけが見れるページです。</p>
+      <form action="/logout" method="post">
+        <button type="submit">ログアウト</button>
+      </form>
+    </body>
+    </html>
+  `);
+});
+
+// ★★★ ここに管理者専用ページを追加 ★★★
+app.get('/admin-panel', requireAuth, requireAdmin, function(req, res) {
+  res.send(`
+    <h1>管理者パネル</h1>
+    <p>ようこそ、${req.session.user.username} さん。</p>
+    <p>ここは管理者だけが見れる特別なページです。</p>
+    <a href="/home">ホームに戻る</a>
+  `);
+});
+
+// 5. ログアウト処理 (POST /logout)
+app.post('/logout', function(req, res) {
+  req.session.destroy(function(err) {
+    if (err) {
+      return res.redirect('/home');
+    }
+    res.redirect('/login');
+  });
+});
+
+
+// --- サーバーの起動 ---
+app.listen(PORT, function() {
+  console.log(`サーバーが http://localhost:${PORT} で起動しました`);
+});
