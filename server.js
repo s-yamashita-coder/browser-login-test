@@ -34,12 +34,21 @@ const requireAuth = function(req, res, next) {
 
 // --- ルーティング（各URLに対する処理） ---
 
-// 1. ルート: ログインしていればホームへ、していなければログインページへ
-app.get('/', function(req, res) {
-  if (req.session.user) {
+// 1. ルート: ログインしていればホームへ、していなければログインページへ(ハッシュを追加)
+const bcrypt = require('bcrypt');
+
+app.post('/login', function(req, res) {
+  const { username, password } = req.body;
+  const user = users.find(u => u.username === username);
+
+  // ユーザーが見つかり、かつパスワードがハッシュと一致するかチェック
+  if (user && bcrypt.compareSync(password, user.passwordHash)) {
+    // 成功！
+    req.session.user = { id: user.id, username: user.username };
     res.redirect('/home');
   } else {
-    res.redirect('/login');
+    // 失敗...
+    res.redirect('/login?failed=1');
   }
 });
 
