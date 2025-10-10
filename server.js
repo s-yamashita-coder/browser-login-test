@@ -1,145 +1,112 @@
 const express = require('express');
 const session = require('express-session');
-const app = express();
-const PORT = 3000;
+const bcrypt = require('bcrypt');
+const path = require('path');
 
-// POSTリクエストのボディを解析するためのミドルウェア
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 逆プロキシ（Codespaces/Heroku等）経由のHTTPSで secure cookie を使うとき
+app.set('trust proxy', 1);
+
+// POST body 解析
 app.use(express.urlencoded({ extended: true }));
 
-// セッション管理の設定
+// ===== セッション設定（本番は Redis/Mongo などのストアに置き換え推奨） =====
 app.use(session({
-  secret: 'my-secret-key', // セッションIDの署名に使うキー（実際にはもっと複雑なものに）
+  name: 'sid',
+  secret: process.env.SESSION_SECRET || 'change-me-please',
   resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // HTTPSでない場合はfalse
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,           // JS から読めない
+    sameSite: 'lax',          // CSRF 耐性
+    secure: false,            // 本番HTTPSなら true に
+    maxAge: 1000 * 60 * 60    // 1時間
+  }
 }));
 
-// --- ダミーのユーザーデータ ---
+// ===== ダミーユーザー（パスワードはハッシュで保存） =====
+// 実際はDBに保存。下の hashSync はサンプル用（本番は登録時に hash）。
 const users = [
-  { id: 1, username: 'user1', password: 'password1',role: 'user' },
-  { id: 2, username: 'admin', password: 'admin_pass',role: 'admin' }
+  {
+    id: 1,
+    username: 'user1',
+    role: 'user',
+    passwordHash: bcrypt.hashSync('password1', 12)
+  },
+  {
+    id: 2,
+    username: 'admin',
+    role: 'admin',
+    passwordHash: bcrypt.hashSync('admin_pass', 12)
+  }
 ];
 
-// --- 認証チェック用のミドルウェア ---
-const requireAuth = function(req, res, next) {
-  if (req.session.user) {
-    // セッションにユーザー情報があれば、次の処理へ進む
-    next();
-  } else {
-    // なければログインページへリダイレクト
-    res.redirect('/login?error=1');
-  }
+// ===== ミドルウェア =====
+const requireAuth = (req, res, next) => {
+  if (req.session.user) return next();
+  return res.redirect('/login?error=1');
 };
 
-// ★★★ ここに新しい門番を追加 ★★★
-const requireAdmin = function(req, res, next) {
-  // セッションにユーザー情報があり、かつ、その役割が 'admin' かどうかをチェック
-  if (req.session.user && req.session.user.role === 'admin') {
-    next(); // 管理者なら、次の処理へ進む
-  } else {
-    // 管理者でなければ、エラーメッセージを表示
-    res.status(403).send('<h1>403 Forbidden</h1><p>このページへのアクセス権がありません。</p>');
-  }
+const requireAdmin = (req, res, next) => {
+  if (req.session.user?.role === 'admin') return next();
+  return res.status(403).send('<h1>403 Forbidden</h1><p>このページへのアクセス権がありません。</p>');
 };
 
+// ===== ルーティング =====
 
-// --- ルーティング（各URLに対する処理） ---
-
-// 1. ルート: ログインしていればホームへ、していなければログインページへ(ハッシュを追加)
-const bcrypt = require('bcrypt');
-
-app.post('/login', function(req, res) {
-  const { username, password } = req.body;
-  const user = users.find(u => u.username === username);
-
-  // ユーザーが見つかり、かつパスワードがハッシュと一致するかチェック
-  if (user && bcrypt.compareSync(password, user.passwordHash)) {
-    // 成功！
-    req.session.user = { 
-      id: user.id,
-      username: user.username,
-      role: user.role // ★役割もセッションに保存
-    };
-    res.redirect('/home');
-  } else {
-    // 失敗...
-    res.redirect('/login?failed=1');
-  }
-});
-
-// 2. ログイン画面を表示 (GET /login)
-app.get('/login', function(req, res) {
-  const errorMessage = req.query.error ? '<p style="color: red;">ログインが必要です。</p>' : '';
-  const loginFailedMessage = req.query.failed ? '<p style="color: red;">ユーザー名またはパスワードが違います。</p>' : '';
-
+// ログインフォーム
+app.get('/login', (req, res) => {
+  const errorMessage = req.query.error ? '<p style="color:red;">ログインが必要です。</p>' : '';
+  const loginFailedMessage = req.query.failed ? '<p style="color:red;">ユーザー名またはパスワードが違います。</p>' : '';
   res.send(`
-    <!DOCTYPE html>
-    <html lang="ja">
-    <head>
-      <title>ログイン</title>
-    </head>
+    <!doctype html>
+    <html lang="ja"><head><meta charset="utf-8"><title>ログイン</title></head>
     <body>
       <h1>ログイン画面</h1>
-      ${errorMessage}
-      ${loginFailedMessage}
+      ${errorMessage}${loginFailedMessage}
       <form action="/login" method="post">
-        <div>
-          <label for="username">ユーザー名:</label>
-          <input type="text" id="username" name="username" required>
-        </div>
-        <div>
-          <label for="password">パスワード:</label>
-          <input type="password" id="password" name="password" required>
-        </div>
+        <div><label for="username">ユーザー名:</label>
+          <input id="username" name="username" required></div>
+        <div><label for="password">パスワード:</label>
+          <input id="password" type="password" name="password" required></div>
         <button type="submit">ログイン</button>
       </form>
-    </body>
-    </html>
+    </body></html>
   `);
 });
 
-// 3. ログイン処理 (POST /login)
-app.post('/login', function(req, res) {
+// ログイン処理（重複を解消）
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
+  const user = users.find(u => u.username === username);
+  if (!user) return res.redirect('/login?failed=1');
 
-  const user = users.find(function(u) {
-    return u.username === username && u.password === password;
-  });
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) return res.redirect('/login?failed=1');
 
-  if (user) {
-    req.session.user = {
-      id: user.id,
-      username: user.username
-    };
-    res.redirect('/home');
-  } else {
-    res.redirect('/login?failed=1');
-  }
+  req.session.user = { id: user.id, username: user.username, role: user.role };
+  return res.redirect('/home');
 });
 
-// 4. ホーム画面 (GET /home)
-app.get('/home', requireAuth, function(req, res) {
+// ホーム
+app.get('/home', requireAuth, (req, res) => {
   const username = req.session.user.username;
-
   res.send(`
-    <!DOCTYPE html>
-    <html lang="ja">
-    <head>
-      <title>ホーム</title>
-    </head>
+    <!doctype html>
+    <html lang="ja"><head><meta charset="utf-8"><title>ホーム</title></head>
     <body>
       <h1>ようこそ、${username} さん！</h1>
       <p>ここはログインした人だけが見れるページです。</p>
-      <form action="/logout" method="post">
-        <button type="submit">ログアウト</button>
-      </form>
-    </body>
-    </html>
+      <p><a href="/admin-panel">管理者パネルへ</a></p>
+      <form action="/logout" method="post"><button type="submit">ログアウト</button></form>
+    </body></html>
   `);
 });
 
-// ★★★ ここに管理者専用ページを追加 ★★★
-app.get('/admin-panel', requireAuth, requireAdmin, function(req, res) {
+// 管理者専用
+app.get('/admin-panel', requireAuth, requireAdmin, (req, res) => {
   res.send(`
     <h1>管理者パネル</h1>
     <p>ようこそ、${req.session.user.username} さん。</p>
@@ -148,18 +115,12 @@ app.get('/admin-panel', requireAuth, requireAdmin, function(req, res) {
   `);
 });
 
-// 5. ログアウト処理 (POST /logout)
-app.post('/logout', function(req, res) {
-  req.session.destroy(function(err) {
-    if (err) {
-      return res.redirect('/home');
-    }
-    res.redirect('/login');
-  });
+// ログアウト
+app.post('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/login'));
 });
 
-
-// --- サーバーの起動 ---
-app.listen(PORT, function() {
-  console.log(`サーバーが http://localhost:${PORT} で起動しました`);
+// 起動
+app.listen(PORT, () => {
+  console.log(`http://localhost:${PORT} で起動中`);
 });
